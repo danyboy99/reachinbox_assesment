@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc --build",
     "start": "node ./build/index.js",
-    "start:dev": "nodemon ./server/index.ts"
+    "dev": "nodemon ./server/index.ts"
   },
   "keywords": [],
   "author": "",
@@ -16,7 +16,8 @@
     "@types/node": "^20.14.8",
     "nodemon": "^3.1.4",
     "ts-node": "^10.9.2",
-    "typescript": "^5.5.2"
+    "typescript": "^5.5.2",
+    "gmail-api-parse-message": "^2.1.2"
   },
   "dependencies": {
     "@azure/identity": "^4.3.0",

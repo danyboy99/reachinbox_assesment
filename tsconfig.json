@@ -11,7 +11,7 @@
     // "disableReferencedProjectLoad": true,
 
     /* Language and Environment */
-    "target": "es2016",
+    "target": "es2017",
     // "lib": [],
     // "jsx": "preserve",
     "experimentalDecorators": true,
@@ -84,17 +84,17 @@
     /* Type Checking */
     "strict": true,
     // "noImplicitAny": true,
-    // "strictNullChecks": true,
-    // "strictFunctionTypes": true,
+    "strictNullChecks": false,
+    "strictFunctionTypes": false,
     // "strictBindCallApply": true,
     "strictPropertyInitialization": false,
-    // "noImplicitThis": true,
+    "noImplicitThis": false,
     // "useUnknownInCatchVariables": true,
-    // "alwaysStrict": true,
-    // "noUnusedLocals": true,
+    "alwaysStrict": false,
+    "noUnusedLocals": false,
     // "noUnusedParameters": true,
     // "exactOptionalPropertyTypes": true,
-    // "noImplicitReturns": true,
+    "noImplicitReturns": true,
     // "noFallthroughCasesInSwitch": true,
     // "noUncheckedIndexedAccess": true,
     // "noImplicitOverride": true,
@@ -104,6 +104,7 @@
 
     /* Completeness */
     // "skipDefaultLibCheck": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "resolveJsonModule": true
   }
 }
