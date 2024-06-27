@@ -2,6 +2,7 @@ import { google, gmail_v1 } from "googleapis";
 import dotenv from "dotenv";
 import * as readline from "readline";
 import { Request, Response } from "express";
+import { analyzeEmailContent } from "./openai";
 
 dotenv.config();
 
@@ -121,6 +122,34 @@ const getNewEmall = async () => {
     return null; // Return null when there are no new emails
   }
 };
+
+// Function to send an email using Gmail API
+const sendEmail = async (to: string, subject: string, body: string) => {
+  const gmail = google.gmail({ version: "v1", auth: googleOauth2Client });
+
+  const emailContent = [`To: ${to}`, "Subject: " + subject, "", body].join(
+    "\n"
+  );
+
+  const encodedMessage = Buffer.from(emailContent)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+
+  try {
+    await gmail.users.messages.send({
+      userId: "me",
+      requestBody: {
+        raw: encodedMessage,
+      },
+    });
+    console.log("Email sent successfully.");
+  } catch (error) {
+    console.error("Error sending email:", error);
+  }
+};
+
 export const execute = async (req: Request, res: Response) => {
   const code = req.query.code as string;
 
@@ -144,8 +173,9 @@ export const execute = async (req: Request, res: Response) => {
     });
 
     const newEmail = await getNewEmall();
-    console.log(`new mail : ${newEmail}`);
-    return res.json({ mail: newEmail });
+    console.log("pass google process successfuly");
+    const analysis = await analyzeEmailContent(newEmail);
+    return res.json({ analysis: analysis });
   } catch (err) {
     console.error("Error retrieving access token", err);
     return res.json("Error retrieving access token");
