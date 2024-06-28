@@ -30,7 +30,10 @@ export const analyzeEmailContent = async (emailContent: string) => {
 };
 
 // Function to generate an automated response based on analysis
-const generateResponse = async (analysis: string, emailContent: string) => {
+export const generateResponse = async (
+  analysis: string,
+  emailContent: string
+) => {
   let prompt = `Generate a reply for an email with the following content:\n\n${emailContent}\n\n`;
   if (analysis.includes("Interested")) {
     prompt += "The sender is interested and wants to know more.";

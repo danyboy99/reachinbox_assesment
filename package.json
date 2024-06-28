@@ -14,14 +14,15 @@
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/node": "^20.14.8",
+    "gmail-api-parse-message": "^2.1.2",
     "nodemon": "^3.1.4",
     "ts-node": "^10.9.2",
-    "typescript": "^5.5.2",
-    "gmail-api-parse-message": "^2.1.2"
+    "typescript": "^5.5.2"
   },
   "dependencies": {
     "@azure/identity": "^4.3.0",
     "@microsoft/microsoft-graph-client": "^3.0.7",
+    "bull": "^4.14.0",
     "bullmq": "^5.8.2",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",

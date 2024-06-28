@@ -1,17 +1,18 @@
 import { google, gmail_v1 } from "googleapis";
 import dotenv from "dotenv";
-import * as readline from "readline";
+import { Queue, Worker, QueueEvents } from "bullmq";
+import IORedis from "ioredis";
 import { Request, Response } from "express";
-import { analyzeEmailContent } from "./openai";
+import { analyzeEmailContent, generateResponse } from "./openai";
 
 dotenv.config();
-
+//google api config
 const googleOauth2Client = new google.auth.OAuth2(
   process.env.googleClientId,
   process.env.googleClientSecret,
   process.env.googleRedirectUrl
 );
-
+//activate googleapi Oauth
 export const activateOauth = () => {
   // Generate the URL to request authorization
   const authUrl = googleOauth2Client.generateAuthUrl({
@@ -123,6 +124,22 @@ const getNewEmall = async () => {
   }
 };
 
+// Create a Redis connection
+const connection = new IORedis({
+  maxRetriesPerRequest: null,
+  enableReadyCheck: false,
+});
+
+// Create queues
+const fetchEmailQueue = new Queue("fetchEmail", { connection });
+const analyzeEmailQueue = new Queue("analyzeEmail", { connection });
+const sendEmailQueue = new Queue("sendEmail", { connection });
+
+// Create queue event
+const fetchEmailEvents = new QueueEvents("fetchEmail", { connection });
+const analyzeEmailEvents = new QueueEvents("analyzeEmail", { connection });
+const sendEmailEvents = new QueueEvents("sendEmail", { connection });
+
 // Function to send an email using Gmail API
 const sendEmail = async (to: string, subject: string, body: string) => {
   const gmail = google.gmail({ version: "v1", auth: googleOauth2Client });
@@ -149,7 +166,7 @@ const sendEmail = async (to: string, subject: string, body: string) => {
     console.error("Error sending email:", error);
   }
 };
-
+// to execute tools
 export const execute = async (req: Request, res: Response) => {
   const code = req.query.code as string;
 
@@ -175,7 +192,67 @@ export const execute = async (req: Request, res: Response) => {
     const newEmail = await getNewEmall();
     console.log("pass google process successfuly");
     const analysis = await analyzeEmailContent(newEmail);
-    return res.json({ analysis: analysis });
+
+    // Handle queue events
+    fetchEmailEvents.on("completed", ({ jobId }) => {
+      console.log(`Job ${jobId} in fetchEmail queue completed.`);
+    });
+
+    analyzeEmailEvents.on("completed", ({ jobId }) => {
+      console.log(`Job ${jobId} in analyzeEmail queue completed.`);
+    });
+
+    sendEmailEvents.on("completed", ({ jobId }) => {
+      console.log(`Job ${jobId} in sendEmail queue completed.`);
+    });
+
+    // Schedule fetchEmailQueue to run every 5 minutes
+    fetchEmailQueue.add(
+      "fetchEmailJob",
+      {},
+      {
+        repeat: { count: 50000 },
+      }
+    );
+
+    // Worker for fetching emails
+    new Worker(
+      "fetchEmail",
+      async () => {
+        const emails = await fetchGmailEmails();
+        for (const emailContent of emails) {
+          await analyzeEmailQueue.add("analyzeEmailJob", { emailContent });
+        }
+      },
+      { connection }
+    );
+
+    // Worker for analyzing emails
+    new Worker(
+      "analyzeEmail",
+      async (job) => {
+        const { emailContent } = job.data;
+        const analysis = await analyzeEmailContent(emailContent);
+        await sendEmailQueue.add("sendEmailJob", { emailContent, analysis });
+      },
+      { connection }
+    );
+
+    // Worker for sending emails
+    new Worker(
+      "sendEmail",
+      async (job) => {
+        const { emailContent, analysis } = job.data;
+        const response: any = await generateResponse(analysis, emailContent);
+        if (response) {
+          const recipientEmail = "recipient@example.com"; // Replace with actual recipient email
+          const subject = "Re: Your recent email";
+          await sendEmail(recipientEmail, subject, response);
+        }
+      },
+      { connection }
+    );
+    return res.json({ msg: "tool activated !!!" });
   } catch (err) {
     console.error("Error retrieving access token", err);
     return res.json("Error retrieving access token");
