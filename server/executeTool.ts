@@ -1,6 +1,6 @@
 import { google, gmail_v1 } from "googleapis";
 import dotenv from "dotenv";
-import { Queue, Worker, QueueEvents } from "bullmq";
+import Bull from "bull";
 import IORedis from "ioredis";
 import { Request, Response } from "express";
 import { analyzeEmailContent, generateResponse } from "./openai";
@@ -23,13 +23,15 @@ export const activateOauth = () => {
   return authUrl;
 };
 
-function decodeBase64Url(data: string): string {
+const decodeBase64Url = (data: string) => {
   let decodedData = data.replace(/-/g, "+").replace(/_/g, "/");
   return Buffer.from(decodedData, "base64").toString("utf-8");
-}
+};
 
 // Function to fetch new emails
-async function fetchGmailEmails(): Promise<string[]> {
+
+// async function fetchGmailEmails(): Promise<string[]> {
+const fetchGmailEmails: any = async () => {
   try {
     const gmail = google.gmail({
       version: "v1",
@@ -71,21 +73,33 @@ async function fetchGmailEmails(): Promise<string[]> {
     const emailDetails = await Promise.all(emailDetailsPromises);
 
     // Filter out any null results and extract the message data
-    const emails = emailDetails
+    const emails: any = emailDetails
       .filter((detail): detail is gmail_v1.Schema$Message => detail !== null)
       .map((detail) => {
         const payload = detail.payload;
-        if (payload && payload.body && payload.body.data) {
-          return decodeBase64Url(payload.body.data);
-        } else if (payload && payload.parts) {
-          // If the body is not directly in the payload, it might be in parts
-          for (const part of payload.parts) {
-            if (part.body && part.body.data) {
-              return decodeBase64Url(part.body.data);
+        let emailContent = "";
+        let recipientEmail = "";
+
+        if (payload) {
+          if (payload.body && payload.body.data) {
+            emailContent = decodeBase64Url(payload.body.data);
+          } else if (payload.parts) {
+            for (const part of payload.parts) {
+              if (part.body && part.body.data) {
+                emailContent = decodeBase64Url(part.body.data);
+                break;
+              }
             }
           }
+
+          const headers = payload.headers || [];
+          const toHeader = headers.find((header) => header.name === "To");
+          if (toHeader && toHeader.value) {
+            recipientEmail = toHeader.value;
+          }
         }
-        return "";
+
+        return { emailContent, recipientEmail };
       });
 
     return emails;
@@ -93,14 +107,10 @@ async function fetchGmailEmails(): Promise<string[]> {
     console.error("Error fetching emails:", err);
     throw err;
   }
-}
+};
 const getAll10Emall = async () => {
   const newEmails = await fetchGmailEmails();
   if (newEmails.length > 0) {
-    // Save the decoded emails to files for easier inspection
-    newEmails.forEach((email, index) => {
-      console.log("index:", index, "emailOriginal:", email);
-    });
     return newEmails;
     // Send the emails to OpenAI for analysis
   } else {
@@ -112,33 +122,13 @@ const getAll10Emall = async () => {
 const getNewEmall = async () => {
   const newEmails = await fetchGmailEmails();
   if (newEmails.length > 0) {
-    // Save the decoded emails to files for easier inspection
-    newEmails.forEach((email, index) => {
-      console.log("index:", index, "emailOriginal:", email);
-    });
-    return newEmails[0];
+    return newEmails[0].emailContent;
     // Send the emails to OpenAI for analysis
   } else {
     console.log("No new emails to process.");
     return null; // Return null when there are no new emails
   }
 };
-
-// Create a Redis connection
-const connection = new IORedis({
-  maxRetriesPerRequest: null,
-  enableReadyCheck: false,
-});
-
-// Create queues
-const fetchEmailQueue = new Queue("fetchEmail", { connection });
-const analyzeEmailQueue = new Queue("analyzeEmail", { connection });
-const sendEmailQueue = new Queue("sendEmail", { connection });
-
-// Create queue event
-const fetchEmailEvents = new QueueEvents("fetchEmail", { connection });
-const analyzeEmailEvents = new QueueEvents("analyzeEmail", { connection });
-const sendEmailEvents = new QueueEvents("sendEmail", { connection });
 
 // Function to send an email using Gmail API
 const sendEmail = async (to: string, subject: string, body: string) => {
@@ -193,17 +183,32 @@ export const execute = async (req: Request, res: Response) => {
     console.log("pass google process successfuly");
     const analysis = await analyzeEmailContent(newEmail);
 
-    // Handle queue events
-    fetchEmailEvents.on("completed", ({ jobId }) => {
-      console.log(`Job ${jobId} in fetchEmail queue completed.`);
+    // Create queues
+    const fetchEmailQueue = new Bull("fetchEmail", {
+      redis: {
+        host: "127.0.0.1",
+        port: 6379,
+        maxRetriesPerRequest: null,
+        enableReadyCheck: false,
+      },
     });
 
-    analyzeEmailEvents.on("completed", ({ jobId }) => {
-      console.log(`Job ${jobId} in analyzeEmail queue completed.`);
+    const analyzeEmailQueue = new Bull("analyzeEmail", {
+      redis: {
+        host: "127.0.0.1",
+        port: 6379,
+        maxRetriesPerRequest: null,
+        enableReadyCheck: false,
+      },
     });
 
-    sendEmailEvents.on("completed", ({ jobId }) => {
-      console.log(`Job ${jobId} in sendEmail queue completed.`);
+    const sendEmailQueue = new Bull("sendEmail", {
+      redis: {
+        host: "127.0.0.1",
+        port: 6379,
+        maxRetriesPerRequest: null,
+        enableReadyCheck: false,
+      },
     });
 
     // Schedule fetchEmailQueue to run every 5 minutes
@@ -211,47 +216,38 @@ export const execute = async (req: Request, res: Response) => {
       "fetchEmailJob",
       {},
       {
-        repeat: { count: 50000 },
+        repeat: { cron: "*/5 * * * *" },
       }
     );
 
-    // Worker for fetching emails
-    new Worker(
-      "fetchEmail",
-      async () => {
-        const emails = await fetchGmailEmails();
-        for (const emailContent of emails) {
-          await analyzeEmailQueue.add("analyzeEmailJob", { emailContent });
-        }
-      },
-      { connection }
-    );
+    // Processor for fetching emails
+    fetchEmailQueue.process(async () => {
+      const emails: any = await fetchGmailEmails();
+      for (const emailContent of emails) {
+        await analyzeEmailQueue.add("analyzeEmailJob", { emailContent });
+      }
+    });
 
-    // Worker for analyzing emails
-    new Worker(
-      "analyzeEmail",
-      async (job) => {
-        const { emailContent } = job.data;
-        const analysis = await analyzeEmailContent(emailContent);
-        await sendEmailQueue.add("sendEmailJob", { emailContent, analysis });
-      },
-      { connection }
-    );
+    // Processor for analyzing emails
+    analyzeEmailQueue.process(async (job) => {
+      const { emailContent } = job.data;
+      const analysis = await analyzeEmailContent(emailContent.emailContent);
+      await sendEmailQueue.add("sendEmailJob", { emailContent, analysis });
+    });
 
-    // Worker for sending emails
-    new Worker(
-      "sendEmail",
-      async (job) => {
-        const { emailContent, analysis } = job.data;
-        const response: any = await generateResponse(analysis, emailContent);
-        if (response) {
-          const recipientEmail = "recipient@example.com"; // Replace with actual recipient email
-          const subject = "Re: Your recent email";
-          await sendEmail(recipientEmail, subject, response);
-        }
-      },
-      { connection }
-    );
+    // Processor for sending emails
+    sendEmailQueue.process(async (job) => {
+      const { emailContent, analysis } = job.data;
+      const response: any = await generateResponse(
+        analysis,
+        emailContent.emailContent
+      );
+      if (response) {
+        const recipientEmail = "";
+        const subject = "Re: Your recent email";
+        await sendEmail(emailContent.recipientEmail, subject, response);
+      }
+    });
     return res.json({ msg: "tool activated !!!" });
   } catch (err) {
     console.error("Error retrieving access token", err);
